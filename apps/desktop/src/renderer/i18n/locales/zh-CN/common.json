@@ -14499,6 +14499,28 @@
           "delete": "删除自动化"
         }
       },
+      "spaces": {
+        "show": "显示空间",
+        "collapseAll": "收起所有空间",
+        "projectCount": "{{count}} 个项目",
+        "runningCount": "{{count}} 项运行中",
+        "create": "新建空间",
+        "rename": "重命名空间",
+        "delete": "删除空间",
+        "name": "空间名称",
+        "save": "保存空间",
+        "menu": "空间操作",
+        "moveTo": "移入空间",
+        "remove": "移出空间",
+        "removeTitle": "将项目移出空间？",
+        "removeDescription": "“{{project}}”将回到主列表，文件和任务均保留。",
+        "deleteTitle": "删除空间？",
+        "deleteDescription": "删除“{{name}}”后，其中项目将回到主列表，文件和任务均保留。",
+        "otherDevices": "{{count}} 项在其他设备",
+        "empty": "拖入项目，或在项目菜单中加入空间",
+        "unassigned": "空间外",
+        "updateFailed": "未能保存空间"
+      },
       "projectAlias": {
         "inputLabel": "项目名称",
         "renameFailed": "项目重命名失败"

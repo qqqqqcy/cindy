@@ -14,11 +14,15 @@
  */
 
 import { useSyncExternalStore } from 'react';
+import { getDataOwnerGeneration, isDataOwnerGenerationCurrent, subscribeDataOwnerGeneration, type DataOwnerGeneration } from '@/contexts/dataOwnerGeneration';
 
 interface PendingFocus {
   workingDir: string;
   /** 单调递增 nonce —— 同一 workingDir 连续两次请求需要触发两次 effect */
   nonce: number;
+  owner: DataOwnerGeneration;
+  /** Set on first DOM observation, then retained across effect restarts. */
+  deadline?: number;
 }
 
 let pending: PendingFocus | null = null;
@@ -31,8 +35,15 @@ function emit(): void {
 
 export function requestProjectFocus(workingDir: string): void {
   if (!workingDir) return;
-  pending = { workingDir, nonce: nextNonce++ };
+  pending = { workingDir, nonce: nextNonce++, owner: getDataOwnerGeneration() };
   emit();
+}
+
+/** Loading and an unmounted sidebar must not consume the observation budget. */
+export function beginProjectFocusObservation(request: PendingFocus): number | null {
+  if (pending !== request || !isDataOwnerGenerationCurrent(request.owner)) return null;
+  request.deadline ??= Date.now() + 3000;
+  return request.deadline;
 }
 
 export function consumePendingProjectFocus(): void {
@@ -44,6 +55,12 @@ export function consumePendingProjectFocus(): void {
 export function getPendingProjectFocus(): PendingFocus | null {
   return pending;
 }
+
+// Clear even when the sidebar is unmounted, so old navigation cannot cross
+// an account switch or a same-account generation repair.
+subscribeDataOwnerGeneration(() => {
+  if (pending && !isDataOwnerGenerationCurrent(pending.owner)) consumePendingProjectFocus();
+});
 
 function subscribe(cb: () => void): () => void {
   listeners.add(cb);

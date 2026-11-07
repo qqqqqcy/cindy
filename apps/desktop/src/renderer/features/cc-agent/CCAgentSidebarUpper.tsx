@@ -130,7 +130,7 @@ import {
   useSessionAttentionKindsWithOrcaLeads,
 } from './lib/orcaLeadWorkerAttention';
 import { patchDraft as patchNewMakerDraft } from '@/state/newMakerDraft';
-import { consumePendingProjectFocus, usePendingProjectFocus } from '@/state/pendingProjectFocus';
+import { beginProjectFocusObservation, consumePendingProjectFocus, getPendingProjectFocus, usePendingProjectFocus } from '@/state/pendingProjectFocus';
 import {
   requestConversationSearch,
   useConversationSearchRequest,
@@ -149,6 +149,9 @@ import { markScheduleRunsReadAndSync } from '../scheduler/lib/scheduleRunReadSyn
 import { useSessionLifecycleActions } from './hooks/useSessionLifecycleActions';
 import { useSidebarFilter, type UseSidebarFilterReturn } from './hooks/useSidebarFilter';
 import { useHiddenProjects, type UseHiddenProjectsReturn } from './hooks/useHiddenProjects';
+import { SidebarSpacesBoundary, useSidebarSpaces } from './hooks/useSidebarSpaces';
+import { projectSpaceId, projectsOutsidePinnedSection } from './lib/sidebarSpaces';
+import { resolveProjectFocusLocation, waitForSidebarProjectNode } from './lib/sidebarProjectFocus';
 import {
   buildPersistentLocalProjects,
   filterPersistentLocalProjectsByLastActivity,
@@ -198,6 +201,7 @@ import { sidebarPriorityContext } from './lib/sidebarPriorityContext';
 import {
   holdSidebarViewedPriority,
   ProjectsSection,
+  SpacePlaceholderHeaders,
   SessionGroupNode,
   viewedPriorityHold,
 } from './sidebar/sections/ProjectsSection';
@@ -434,6 +438,10 @@ function cutoffForLastActivity(
 /* ============================== Root ============================== */
 
 export function CCAgentSidebarUpper() {
+  return <SidebarSpacesBoundary><CCAgentSidebarUpperContent /></SidebarSpacesBoundary>;
+}
+
+function CCAgentSidebarUpperContent() {
   const { t } = useTranslation();
   const localPlatform = window.electronAPI.platform;
   const isCollapsed = useSidebarCollapsedState();
@@ -1728,48 +1736,8 @@ function ExpandedView({
    *   - 仍不命中 → toast 提示 + consume(避免 effect 循环)
    */
   const pendingFocus = usePendingProjectFocus();
+  const sidebarSpaces = useSidebarSpaces();
   const isLoadingSessions = sessionsHook.isLoading;
-  useEffect(() => {
-    if (!pendingFocus) return;
-    if (isLoadingSessions) return; // 等首次加载完
-    const targetDir = pendingFocus.workingDir;
-    const targetKey = normalizeProjectKey(targetDir) ?? `local:${targetDir}`;
-    const representativeKey = findProjectRepresentativeKey(
-      groupsWithPinnedProjects.projects,
-      targetKey,
-      localPlatform,
-    );
-    if (representativeKey) {
-      collapse.expand(representativeKey);
-      // RAF 等 expand 触发的 re-render 完成 (project header DOM 在折叠态下已渲染,
-      // 这里 RAF 主要给"刚 mount"的场景一帧时间让 querySelector 拿到节点)。
-      requestAnimationFrame(() => {
-        const node = document.querySelector(
-          `[data-project-workingdir="${CSS.escape(representativeKey)}"]`,
-        );
-        if (node) node.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-      });
-    } else if (selectedMachineId !== MACHINE_ALL) {
-      // 目标项目可能在别的机器 / 本机,被机器切换栏过滤掉了 —— 深链是「跳到这个项目」的明确意图,
-      // 应越过当前过滤:回落「所有」让它重新可见,**不消费**;selectedMachineId 变 → groups.projects
-      // 重算 → 本 effect 重跑,这次命中就 expand+scroll,真不存在才走下面的 toast 分支。
-      // 走 Transient(只改内存不落盘):这是系统性回落、不是用户对勾选集的表态,
-      // 不能把用户持久化的机器多选集永久冲掉(重启后仍恢复原勾选)。
-      setSelectedMachineIdTransient(MACHINE_ALL);
-      return;
-    } else {
-      toast.warning(t('ccAgent.sidebar.deepLink.projectNotFound'));
-    }
-    consumePendingProjectFocus();
-  }, [
-    pendingFocus,
-    groupsWithPinnedProjects.projects,
-    collapse,
-    isLoadingSessions,
-    localPlatform,
-    selectedMachineId,
-    t,
-  ]);
 
   /* ---- 自动展开：首条消息把 session 从未分类挪进 Project 时，
    *      若目标 Project 当前折叠，幂等展开它，避免新会话视觉上"消失"。
@@ -2093,9 +2061,8 @@ function ExpandedView({
   );
 
   const visibleProjectsWithVendor = useMemo(() => {
-    const unpinnedProjects = visibleProjects.filter(
-      (project) =>
-        !projectKeyComparisonSetHas(pinnedProjectComparisonKeys, project.projectKey, localPlatform),
+    const unpinnedProjects = projectsOutsidePinnedSection(
+      visibleProjects, pinnedProjectComparisonKeys, sidebarSpaces, localPlatform,
     );
     const projects = unpinnedProjects.flatMap((project) => {
       const matchingSessions = vendorPredicate
@@ -2122,12 +2089,58 @@ function ExpandedView({
   }, [
     visibleProjects,
     pinnedProjectComparisonKeys,
+    sidebarSpaces,
     localPlatform,
     vendorPredicate,
     filter.vendor,
     hostProjectSort,
     projectPriorityContext,
   ]);
+
+  const focusTargetKey = pendingFocus ? normalizeProjectKey(pendingFocus.workingDir) ?? `local:${pendingFocus.workingDir}` : null;
+  const focusProjectKey = focusTargetKey ? (
+    findProjectRepresentativeKey(visiblePinnedEntries.flatMap(entry => entry.kind === 'project' ? [entry.project] : []), focusTargetKey, localPlatform)
+    ?? findProjectRepresentativeKey(groupsWithPinnedProjects.projects, focusTargetKey, localPlatform)
+  ) : null;
+  const focusLocation = focusProjectKey ? resolveProjectFocusLocation(
+    focusProjectKey,
+    visiblePinnedEntries.flatMap(entry => entry.kind === 'project' ? [entry.project] : []),
+    visibleProjectsWithVendor,
+    filter.groupBy,
+    localPlatform,
+  ) : 'unavailable';
+  useEffect(() => {
+    if (!pendingFocus || isLoadingSessions) return;
+    const finish = (unavailable: boolean) => {
+      if (getPendingProjectFocus() !== pendingFocus) return;
+      if (unavailable) toast.warning(t('ccAgent.sidebar.deepLink.projectNotFound'));
+      consumePendingProjectFocus();
+    };
+    if (!focusProjectKey) {
+      if (selectedMachineId !== MACHINE_ALL) setSelectedMachineIdTransient(MACHINE_ALL);
+      else finish(true);
+      return;
+    }
+    // Pinned has its own location and can be revealed in flat/filtered views.
+    if (focusLocation === 'unavailable') {
+      toast.warning(t('newChat.folderPicker.noMatchingProjects'));
+      finish(false);
+      return;
+    }
+    if (selectedMachineConnecting) { finish(true); return; }
+    if (focusLocation === 'project') {
+      const spaceId = sidebarSpaces?.showSpaces ? projectSpaceId(focusProjectKey, sidebarSpaces, localPlatform) : null;
+      const space = sidebarSpaces?.spaces.find(item => item.id === spaceId);
+      if (space?.collapsed) {
+        void sidebarSpaces?.update(space.id, { collapsed: false }).then(saved => { if (!saved) finish(true); });
+        return;
+      }
+    }
+    collapse.expand(focusProjectKey);
+    const deadline = beginProjectFocusObservation(pendingFocus);
+    if (deadline === null) return;
+    return waitForSidebarProjectNode(focusProjectKey, () => finish(false), document, () => finish(true), pendingFocus.owner, deadline);
+  }, [pendingFocus, isLoadingSessions, focusProjectKey, focusLocation, selectedMachineId, selectedMachineConnecting, sidebarSpaces, localPlatform, collapse.expand, t]);
 
   // 折叠 rail 没有独立的 Pinned 项目瓷砖，因此项目面板必须保留置顶项目，
   // 否则侧栏折叠后这些项目及其取消置顶入口都会完全不可达。
@@ -3809,6 +3822,7 @@ function ExpandedView({
                   dialogueCount={allGroups.dialogues.length}
                   hasRemoteDevices={deviceGroupingAvailable}
                 />
+                <SpacePlaceholderHeaders allKnownProjects={visibleProjectUniverse} />
                 <RemoteSidebarLoadNotice
                   kind="tasks"
                   status="error"
@@ -3824,6 +3838,7 @@ function ExpandedView({
                   dialogueCount={allGroups.dialogues.length}
                   hasRemoteDevices={deviceGroupingAvailable}
                 />
+                <SpacePlaceholderHeaders allKnownProjects={visibleProjectUniverse} />
                 <RemoteSidebarLoadNotice kind="devices" status="loading" partial={false} />
               </>
             ) : remoteSessionBootstrapLoadingDevices.length > 0 && !hasVisibleSidebarContent ? (
@@ -3834,6 +3849,7 @@ function ExpandedView({
                   dialogueCount={allGroups.dialogues.length}
                   hasRemoteDevices={deviceGroupingAvailable}
                 />
+                <SpacePlaceholderHeaders allKnownProjects={visibleProjectUniverse} />
                 <RemoteSidebarLoadNotice
                   kind="tasks"
                   status="loading"
@@ -3851,6 +3867,7 @@ function ExpandedView({
                   dialogueCount={allGroups.dialogues.length}
                   hasRemoteDevices={deviceGroupingAvailable}
                 />
+                <SpacePlaceholderHeaders allKnownProjects={visibleProjectUniverse} />
                 <div className="flex flex-col items-center justify-center px-3 py-12 text-center">
                   <span className="animate-pulse text-xs text-[var(--text-tertiary)]">
                     {t('ccAgent.sidebar.machineSwitcher.connecting')}
@@ -3874,6 +3891,7 @@ function ExpandedView({
                  * 同样不展示，继续使用本地与已缓存内容即可。
                  */}
                 <PinnedSection
+                  focusProjectKey={focusLocation === 'pinned' ? focusProjectKey : null}
                   entries={sortedPinnedEntries}
                   allKnownProjects={visibleProjectUniverse}
                   renderProject={(

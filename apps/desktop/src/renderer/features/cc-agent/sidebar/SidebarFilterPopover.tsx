@@ -17,6 +17,7 @@
  */
 
 import { MountedMenuContent } from './MountedMenuContent';
+import { SpaceDisplayMenuItems } from './SpaceSection';
 import type { ReactNode } from 'react';
 import {
   AlignJustify,
@@ -636,6 +637,7 @@ export function SidebarFilterPopover({
         <MountedMenuContent>
           {() => (
             <div className="max-h-[calc(var(--radix-dropdown-menu-content-available-height)-0.75rem)] overflow-x-hidden overflow-y-auto">
+              <SpaceDisplayMenuItems />
               <MenuSubRow
                 label={t('ccAgent.sidebar.filterGroupByHeading')}
                 value={groupByValue}

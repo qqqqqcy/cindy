@@ -14499,6 +14499,28 @@
           "delete": "자동화 삭제"
         }
       },
+      "spaces": {
+        "show": "스페이스 표시",
+        "collapseAll": "모든 스페이스 접기",
+        "projectCount": "프로젝트 {{count}}개",
+        "runningCount": "{{count}}개 실행 중",
+        "create": "스페이스 만들기",
+        "rename": "스페이스 이름 변경",
+        "delete": "스페이스 삭제",
+        "name": "스페이스 이름",
+        "save": "스페이스 저장",
+        "menu": "스페이스 작업",
+        "moveTo": "스페이스로 이동",
+        "remove": "스페이스에서 꺼내기",
+        "removeTitle": "프로젝트를 스페이스에서 꺼낼까요?",
+        "removeDescription": "‘{{project}}’이(가) 기본 목록으로 돌아갑니다. 파일과 세션은 유지됩니다.",
+        "deleteTitle": "스페이스를 삭제할까요?",
+        "deleteDescription": "‘{{name}}’을(를) 삭제할까요? 프로젝트는 기본 목록으로 돌아가며 파일과 세션은 유지됩니다.",
+        "otherDevices": "다른 기기에 {{count}}개 항목",
+        "empty": "프로젝트를 여기로 끌어오거나 프로젝트 메뉴에서 추가하세요.",
+        "unassigned": "스페이스 외부",
+        "updateFailed": "스페이스를 저장하지 못했습니다"
+      },
       "projectAlias": {
         "inputLabel": "프로젝트 이름",
         "renameFailed": "프로젝트 이름 변경 실패"

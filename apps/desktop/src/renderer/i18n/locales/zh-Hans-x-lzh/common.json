@@ -14499,6 +14499,28 @@
           "delete": "删除自运"
         }
       },
+      "spaces": {
+        "show": "示空间",
+        "collapseAll": "尽收空间",
+        "projectCount": "{{count}} 案",
+        "runningCount": "{{count}} 项方行",
+        "create": "立空间",
+        "rename": "空间易名",
+        "delete": "删除空间",
+        "name": "空间名",
+        "save": "存空间",
+        "menu": "空间操作",
+        "moveTo": "移入空间",
+        "remove": "移出空间",
+        "removeTitle": "移案出空间？",
+        "removeDescription": "「{{project}}」将归主列表，文件与差事均保留。",
+        "deleteTitle": "删除空间？",
+        "deleteDescription": "删除「{{name}}」后，其中诸案将归主列表，文件与差事均保留。",
+        "otherDevices": "{{count}} 项在他机",
+        "empty": "拖案至此，或自案之菜单加入空间",
+        "unassigned": "空间外",
+        "updateFailed": "存空间未成"
+      },
       "projectAlias": {
         "inputLabel": "案名",
         "renameFailed": "案易名未成"

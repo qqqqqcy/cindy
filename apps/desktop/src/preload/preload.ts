@@ -253,6 +253,8 @@ import {
   isSidebarGhostId,
   isSidebarLegacyRendererOwnerClaim,
   isSidebarSettingsSnapshot,
+  isSidebarSpacesState,
+  type SidebarSpacesState,
   type SidebarLegacyRendererOwnerClaim,
   type SidebarPinnedOrderMutation,
   type SidebarSettingsSnapshot,
@@ -646,6 +648,13 @@ const fanOutPluginUpdateConsentHoldsChanged = createIpcFanOut(
 const fanOutSchemaDriftWarning = createIpcFanOut('local-db:schema-drift-warning');
 const fanOutProjectAliasesChanged = createIpcFanOut('local-db:project-aliases:changed');
 const fanOutSessionImportProgress = createIpcFanOut('session-import:progress');
+async function invokeSidebarSpaces(kind: 'create' | 'update' | 'delete' | 'assign' | 'show', request: object): Promise<SidebarSpacesState> {
+  const result: unknown = await ipcRenderer.invoke(`sidebar-settings:spaces-${kind}`, request);
+  if (!isSidebarSpacesState(result)) throw new Error('invalid sidebar spaces response');
+  return result;
+}
+
+const fanOutSidebarSpacesChanged = createIpcFanOut('sidebar-settings:spaces-changed');
 const fanOutSidebarPinnedOrderChanged = createIpcFanOut('sidebar-settings:pinned-order-changed');
 const fanOutSidebarHiddenProjectKeysChanged = createIpcFanOut(
   'sidebar-settings:hidden-project-keys-changed',
@@ -5803,6 +5812,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Sidebar identity state is owner-scoped in main and every mutation/push is generation-fenced.
   sidebarSettings: {
+    createSpace: (name: string, ownerStamp: DataOwnerPushStamp): Promise<SidebarSpacesState> =>
+      invokeSidebarSpaces('create', { ...ownerStamp, name }),
+    updateSpace: (id: string, patch: { name?: string; order?: number; collapsed?: boolean }, ownerStamp: DataOwnerPushStamp): Promise<SidebarSpacesState> =>
+      invokeSidebarSpaces('update', { ...ownerStamp, id, patch }),
+    deleteSpace: (id: string, ownerStamp: DataOwnerPushStamp): Promise<SidebarSpacesState> =>
+      invokeSidebarSpaces('delete', { ...ownerStamp, id }),
+    setProjectSpace: (projectKey: string, spaceId: string | null, ownerStamp: DataOwnerPushStamp): Promise<SidebarSpacesState> =>
+      invokeSidebarSpaces('assign', { ...ownerStamp, projectKey, spaceId }),
+    setShowSpaces: (showSpaces: boolean, ownerStamp: DataOwnerPushStamp): Promise<SidebarSpacesState> =>
+      invokeSidebarSpaces('show', { ...ownerStamp, showSpaces }),
+    onSpacesChanged: (cb: (state: SidebarSpacesState) => void): (() => void) =>
+      fanOutSidebarSpacesChanged((state) => { if (isSidebarSpacesState(state)) cb(state); }),
     claimLegacyRendererOwner: (): SidebarLegacyRendererOwnerClaim => {
       const value: unknown = ipcRenderer.sendSync(
         'sidebar-settings:claim-renderer-legacy-owner-sync',
@@ -5827,6 +5848,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
             pinnedOrder: Array.from(value.pinnedOrder),
             hiddenProjectKeys: Array.from(value.hiddenProjectKeys),
             hiddenMainViewGhostIds: Array.from(value.hiddenMainViewGhostIds),
+            spaces: value.spaces?.map((space) => ({ ...space })) ?? [],
+            projectSpaceIds: { ...value.projectSpaceIds },
+            showSpaces: value.showSpaces ?? true,
           }
         : {
             dataOwnerId: null,

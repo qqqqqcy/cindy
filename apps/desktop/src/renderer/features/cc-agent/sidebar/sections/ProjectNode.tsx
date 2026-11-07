@@ -1,5 +1,6 @@
 import { deviceDisplayName } from '@/lib/deviceName';
 import { MountedMenuContent } from '../MountedMenuContent';
+import { ProjectSpaceMenu } from '../SpaceSection';
 /**
  * ProjectNode — 单个 Project 节点（Header + 受控折叠的子 sessions）
  * ---------------------------------------------------------------------------
@@ -630,6 +631,7 @@ const ProjectHeader = memo(function ProjectHeader({
                       : 'ccAgent.sidebar.projectAction.pin',
                   )}
                 </DropdownMenuItem>
+                <ProjectSpaceMenu project={project} onAction={() => setMenuPos(null)} />
                 <DropdownMenuSeparator className="my-1 h-px bg-[var(--cmd-palette-border)]" />
                 {/* 菜单 items 顺序:浏览 → 工具 → 危险
               [搜索, 查看文件, 在文件管理器中打开] - [复制深度链接, 同步 Codex] - [全部归档]

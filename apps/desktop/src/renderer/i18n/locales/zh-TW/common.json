@@ -14499,6 +14499,28 @@
           "delete": "刪除自動化"
         }
       },
+      "spaces": {
+        "show": "顯示空間",
+        "collapseAll": "收起所有空間",
+        "projectCount": "{{count}} 個專案",
+        "runningCount": "{{count}} 項執行中",
+        "create": "新建空間",
+        "rename": "重新命名空間",
+        "delete": "刪除空間",
+        "name": "空間名稱",
+        "save": "儲存空間",
+        "menu": "空間操作",
+        "moveTo": "移入空間",
+        "remove": "移出空間",
+        "removeTitle": "將專案移出空間？",
+        "removeDescription": "「{{project}}」將回到主列表，檔案與任務均會保留。",
+        "deleteTitle": "刪除空間？",
+        "deleteDescription": "刪除「{{name}}」後，其中專案將回到主列表，檔案與任務均會保留。",
+        "otherDevices": "{{count}} 項在其他裝置",
+        "empty": "拖入專案，或從專案選單加入空間",
+        "unassigned": "空間外",
+        "updateFailed": "無法儲存空間"
+      },
       "projectAlias": {
         "inputLabel": "專案名稱",
         "renameFailed": "專案重新命名失敗"

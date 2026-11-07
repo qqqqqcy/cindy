@@ -14565,6 +14565,28 @@
           "delete": "Delete Automation"
         }
       },
+      "spaces": {
+        "show": "Show Spaces",
+        "collapseAll": "Collapse All Spaces",
+        "projectCount": "{{count}} projects",
+        "runningCount": "{{count}} running",
+        "create": "Create Space",
+        "rename": "Rename Space",
+        "delete": "Delete Space",
+        "name": "Space Name",
+        "save": "Save Space",
+        "menu": "Space Actions",
+        "moveTo": "Move to Space",
+        "remove": "Remove from Space",
+        "removeTitle": "Remove Project from Space?",
+        "removeDescription": "“{{project}}” will return to the main list. Its files and tasks are kept.",
+        "deleteTitle": "Delete Space?",
+        "deleteDescription": "Delete “{{name}}”? Its projects will return to the main list. Files and tasks are kept.",
+        "otherDevices": "{{count}} items on other devices",
+        "empty": "Drag a project here or use its menu to add it.",
+        "unassigned": "Outside Spaces",
+        "updateFailed": "Could not save spaces"
+      },
       "projectAlias": {
         "inputLabel": "Project name",
         "renameFailed": "Project rename failed"

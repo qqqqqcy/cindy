@@ -27,6 +27,8 @@ import {
   type SidebarLegacyRendererOwnerClaim,
   type SidebarProjectHiddenWriteRequest,
   type SidebarSettingsSnapshot,
+  type SidebarSpace,
+  type SidebarSpacesState,
 } from '../shared/sidebarSettings.js';
 import {
   activeOwnerScopeKey,
@@ -56,12 +58,18 @@ interface SidebarSettingsShape {
   pinnedOrder: string[];
   hiddenProjectKeys: string[];
   hiddenMainViewGhostIds: string[];
+  spaces: SidebarSpace[];
+  projectSpaceIds: Record<string, string>;
+  showSpaces: boolean;
 }
 
 const DEFAULTS: SidebarSettingsShape = {
   pinnedOrder: [],
   hiddenProjectKeys: [],
   hiddenMainViewGhostIds: [],
+  spaces: [],
+  projectSpaceIds: {},
+  showSpaces: true,
 };
 const MAX_HIDDEN_PROJECT_ENTRIES = 10_000;
 const MAX_PROJECT_KEY_LENGTH = 4_096;
@@ -117,7 +125,35 @@ function normalizeHiddenMainViewGhostIds(raw: unknown): string[] {
 
 function normalizeSettings(raw: unknown): SidebarSettingsShape {
   const value = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+  const spaces: SidebarSpace[] = [];
+  const ids = new Set<string>();
+  if (Array.isArray(value.spaces)) {
+    for (const rawSpace of value.spaces) {
+      if (!rawSpace || typeof rawSpace !== 'object') continue;
+      const { id, name, order, collapsed } = rawSpace;
+      if (typeof id !== 'string' || !id || id.length > 128 || ids.has(id) ||
+          typeof name !== 'string' || !name.trim() || name.length > 256 ||
+          typeof order !== 'number' || !Number.isFinite(order) || typeof collapsed !== 'boolean') continue;
+      ids.add(id);
+      spaces.push({ id, name, order, collapsed });
+      if (spaces.length >= 1000) break;
+    }
+  }
+  const projectSpaceIds: Record<string, string> = {};
+  const seenProjects = new Set<string>();
+  if (value.projectSpaceIds && typeof value.projectSpaceIds === 'object' && !Array.isArray(value.projectSpaceIds)) {
+    for (const [key, id] of Object.entries(value.projectSpaceIds)) {
+      const normalized = normalizeProjectKey(key);
+      const comparison = projectKeyComparisonKey(normalized, process.platform);
+      if (!normalized || normalized.length > MAX_PROJECT_KEY_LENGTH || !comparison ||
+          seenProjects.has(comparison) || typeof id !== 'string' || !ids.has(id)) continue;
+      seenProjects.add(comparison);
+      projectSpaceIds[normalized] = id;
+      if (seenProjects.size >= MAX_HIDDEN_PROJECT_ENTRIES) break;
+    }
+  }
   return {
+    spaces, projectSpaceIds, showSpaces: value.showSpaces !== false,
     pinnedOrder: normalizeSidebarPinnedOrder(value.pinnedOrder),
     hiddenProjectKeys: normalizeHiddenProjectKeys(value.hiddenProjectKeys),
     hiddenMainViewGhostIds: normalizeHiddenMainViewGhostIds(value.hiddenMainViewGhostIds),
@@ -223,6 +259,9 @@ export function loadSidebarSettingsSnapshot(): SidebarSettingsSnapshot {
     pinnedOrder: Array.from(current.settings.pinnedOrder),
     hiddenProjectKeys: Array.from(current.settings.hiddenProjectKeys),
     hiddenMainViewGhostIds: Array.from(current.settings.hiddenMainViewGhostIds),
+    spaces: current.settings.spaces.map((space) => ({ ...space })),
+    projectSpaceIds: { ...current.settings.projectSpaceIds },
+    showSpaces: current.settings.showSpaces,
   };
 }
 
@@ -623,6 +662,87 @@ export async function setLocalMainViewHidden(ghostId: string, hidden: boolean, a
   await setMainViewHidden({ dataOwnerId, ownerGeneration, ghostId, hidden }, assertCurrent);
 }
 
+type SpaceMutation = 'create' | 'update' | 'delete' | 'assign' | 'show';
+
+async function mutateSpaces(kind: SpaceMutation, rawRequest: unknown): Promise<SidebarSpacesState> {
+  const request = requireWriteRequest(rawRequest);
+  assertRequestedOwner(request);
+  const scopeKey = activeOwnerScopeKey();
+  const ownerStamp = { dataOwnerId: request.dataOwnerId, ownerGeneration: request.ownerGeneration };
+  requireSidebarStoreAccess();
+  const store = currentStore();
+  let changed = false;
+  let next: SidebarSettingsShape;
+  try {
+    next = await enqueueWrite(scopeKey, () => store.updateAtomic(({ value }) => {
+      assertRequestedOwner(request);
+      requireSidebarStoreAccess({ rejectSnapshotChange: true });
+      const spaces = value.spaces.map((space) => ({ ...space }));
+      const projectSpaceIds = { ...value.projectSpaceIds };
+      let showSpaces = value.showSpaces;
+      const validId = (id: unknown): id is string => typeof id === 'string' && id.length > 0 && id.length <= 128;
+      const validName = (name: unknown): name is string => typeof name === 'string' && name.trim().length > 0 && name.length <= 256;
+      if (kind === 'create') {
+        if (!validName(request.name) || spaces.length >= 1000) throwIpcError('INVALID_PARAMS', 'invalid space name or limit');
+        spaces.push({ id: randomUUID(), name: request.name.trim(), order: spaces.length ? Math.max(...spaces.map((s) => s.order)) + 1 : 0, collapsed: false });
+        changed = true;
+      } else if (kind === 'show') {
+        if (typeof request.showSpaces !== 'boolean') throwIpcError('INVALID_PARAMS', 'invalid space visibility');
+        showSpaces = request.showSpaces;
+        changed = showSpaces !== value.showSpaces;
+      } else if (kind === 'assign') {
+        const key = requireProjectKey(request.projectKey);
+        const id = request.spaceId;
+        if (id !== null && (!validId(id) || !spaces.some((s) => s.id === id))) throwIpcError('INVALID_PARAMS', 'invalid space id');
+        const identity = projectKeyComparisonKey(key, process.platform);
+        const existing = Object.keys(projectSpaceIds).find((entry) => projectKeyComparisonKey(entry, process.platform) === identity);
+        if (existing && projectSpaceIds[existing] === id) return {};
+        if (existing) delete projectSpaceIds[existing];
+        if (id !== null) {
+          if (Object.keys(projectSpaceIds).length >= MAX_HIDDEN_PROJECT_ENTRIES) throwIpcError('INVALID_PARAMS', 'too many project assignments');
+          projectSpaceIds[key] = id as string;
+        }
+        changed = existing !== undefined || id !== null;
+      } else {
+        if (!validId(request.id)) throwIpcError('INVALID_PARAMS', 'invalid space id');
+        const index = spaces.findIndex((space) => space.id === request.id);
+        if (index < 0) throwIpcError('NOT_FOUND', 'space not found');
+        if (kind === 'delete') {
+          spaces.splice(index, 1);
+          for (const [key, id] of Object.entries(projectSpaceIds)) if (id === request.id) delete projectSpaceIds[key];
+          changed = true;
+        } else {
+          const patch = request.patch;
+          if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throwIpcError('INVALID_PARAMS', 'invalid space patch');
+          const p = patch as Record<string, unknown>;
+          if (Object.keys(p).some((key) => !['name', 'order', 'collapsed'].includes(key)) ||
+              (p.name !== undefined && !validName(p.name)) ||
+              (p.order !== undefined && (typeof p.order !== 'number' || !Number.isFinite(p.order) || Math.abs(p.order) > 1e9)) ||
+              (p.collapsed !== undefined && typeof p.collapsed !== 'boolean')) throwIpcError('INVALID_PARAMS', 'invalid space patch');
+          const space = spaces[index]!;
+          if (typeof p.name === 'string') space.name = p.name.trim();
+          if (typeof p.order === 'number') space.order = p.order;
+          if (typeof p.collapsed === 'boolean') space.collapsed = p.collapsed;
+          changed = space.name !== value.spaces[index]!.name || space.order !== value.spaces[index]!.order || space.collapsed !== value.spaces[index]!.collapsed;
+        }
+      }
+      return changed ? { spaces, projectSpaceIds, showSpaces } : {};
+    }, SIDEBAR_WRITE_OPTIONS));
+    assertScopeCurrent(scopeKey);
+    assertRequestedOwner(request);
+  } catch (err) {
+    if (isIpcError(err)) throw err;
+    if (activeOwnerScopeKey() !== scopeKey || isAppSessionBoundaryPending()) throwIpcError('PRECONDITION_FAILED', 'active account changed during sidebar mutation');
+    log.error('failed to persist sidebar spaces', err);
+    throwIpcError('INTERNAL', 'failed to persist sidebar settings');
+  }
+  const state: SidebarSpacesState = { ...ownerStamp, spaces: next.spaces, projectSpaceIds: next.projectSpaceIds, showSpaces: next.showSpaces };
+  if (changed) for (const window of BrowserWindow.getAllWindows()) {
+    if (isTrustedAppRendererWindow(window)) window.webContents.send('sidebar-settings:spaces-changed', state);
+  }
+  return state;
+}
+
 type SidebarPathState = 'missing' | 'regular-file' | 'blocked';
 
 function sidebarPathState(file: string): SidebarPathState {
@@ -900,6 +1020,12 @@ function refreshInputDeviceTaskSlotsAfterPinnedOrderChange(): void {
 }
 
 export function registerSidebarSettingsIpc(): void {
+  for (const kind of ['create', 'update', 'delete', 'assign', 'show'] as const) {
+    ipcMain.handle(`sidebar-settings:spaces-${kind}`, (event, request) => {
+      assertTrustedAppRendererEvent(event);
+      return mutateSpaces(kind, request);
+    });
+  }
   ipcMain.on('sidebar-settings:claim-renderer-legacy-owner-sync', (event) => {
     assertTrustedAppRendererEvent(event);
     event.returnValue = claimLegacyRendererSidebarOwner();

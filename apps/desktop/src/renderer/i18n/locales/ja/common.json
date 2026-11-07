@@ -14499,6 +14499,28 @@
           "delete": "自動化を削除"
         }
       },
+      "spaces": {
+        "show": "スペースを表示",
+        "collapseAll": "すべてのスペースを折りたたむ",
+        "projectCount": "{{count}} 件のプロジェクト",
+        "runningCount": "{{count}} 件が実行中",
+        "create": "スペースを作成",
+        "rename": "スペースの名前を変更",
+        "delete": "スペースを削除",
+        "name": "スペース名",
+        "save": "スペースを保存",
+        "menu": "スペースの操作",
+        "moveTo": "スペースに移動",
+        "remove": "スペースから移動",
+        "removeTitle": "プロジェクトをスペースから移動しますか？",
+        "removeDescription": "「{{project}}」はメインリストに戻ります。ファイルとセッションは保持されます。",
+        "deleteTitle": "スペースを削除しますか？",
+        "deleteDescription": "「{{name}}」を削除しますか？プロジェクトはメインリストに戻り、ファイルとセッションは保持されます。",
+        "otherDevices": "他のデバイスに {{count}} 件",
+        "empty": "プロジェクトをここにドラッグするか、プロジェクトのメニューから追加します。",
+        "unassigned": "スペース外",
+        "updateFailed": "スペースを保存できませんでした"
+      },
       "projectAlias": {
         "inputLabel": "プロジェクト名",
         "renameFailed": "プロジェクト名の変更に失敗しました"

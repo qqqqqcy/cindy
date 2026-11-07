@@ -14565,6 +14565,28 @@
           "delete": "Automatisierung löschen"
         }
       },
+      "spaces": {
+        "show": "Bereiche anzeigen",
+        "collapseAll": "Alle Bereiche einklappen",
+        "projectCount": "{{count}} Projekte",
+        "runningCount": "{{count}} werden ausgeführt",
+        "create": "Bereich erstellen",
+        "rename": "Bereich umbenennen",
+        "delete": "Bereich löschen",
+        "name": "Bereichsname",
+        "save": "Bereich speichern",
+        "menu": "Bereichsaktionen",
+        "moveTo": "In Bereich verschieben",
+        "remove": "Aus Bereich entfernen",
+        "removeTitle": "Projekt aus Bereich entfernen?",
+        "removeDescription": "„{{project}}“ kehrt in die Hauptliste zurück. Dateien und Sitzungen bleiben erhalten.",
+        "deleteTitle": "Bereich löschen?",
+        "deleteDescription": "„{{name}}“ löschen? Die Projekte kehren in die Hauptliste zurück. Dateien und Sitzungen bleiben erhalten.",
+        "otherDevices": "{{count}} Elemente auf anderen Geräten",
+        "empty": "Ziehe ein Projekt hierher oder füge es über sein Menü hinzu.",
+        "unassigned": "Außerhalb von Bereichen",
+        "updateFailed": "Bereiche konnten nicht gespeichert werden"
+      },
       "projectAlias": {
         "inputLabel": "Projektname",
         "renameFailed": "Projekt konnte nicht umbenannt werden"

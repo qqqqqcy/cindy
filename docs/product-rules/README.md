@@ -12,6 +12,7 @@
 | --- | --- |
 | Agent 管理用户自己的资源、跨电脑工具与能力发现 | [Agent 与用户同权](agent-user-parity.md) |
 | 任务、对话、消息的用户称谓 | [命名](task-and-conversation-naming.md) |
+| 空间、项目单归属与侧栏收纳 | [空间](spaces.md) |
 | 消息发送、来源标签与模型说明 | [消息来源](message-source.md) |
 | IM 上下文展示与完成未读 | [IM 消息呈现](im-message-presentation.md) |
 | IM 工具授权、多端确认与暂停回执 | [IM 权限确认](im-permission-confirmation.md) |

@@ -148,6 +148,8 @@ export type PinnedSidebarEntry =
     };
 
 export interface PinnedSectionProps {
+  /** A pending deep link to a project in this section reveals the section. */
+  focusProjectKey?: string | null;
   /** 已按筛选和持久化顺序排好的置顶对话与项目。 */
   entries: PinnedSidebarEntry[];
   /**
@@ -179,6 +181,7 @@ export interface PinnedSectionProps {
 }
 
 export function PinnedSection({
+  focusProjectKey,
   entries,
   allKnownProjects,
   renderProject,
@@ -201,6 +204,11 @@ export function PinnedSection({
   // 段头 trigger 的图标 = 当前选中的显示模式(用户一眼看出现在是哪种)。
   const ViewStyleTriggerIcon = viewStyleIcon(mode);
   const [collapsed, setCollapsed] = useState(loadPinnedSectionCollapsed);
+  useEffect(() => {
+    if (!focusProjectKey || !entries.some(entry => entry.kind === 'project' && entry.project.projectKey === focusProjectKey)) return;
+    setCollapsed(false);
+    persistPinnedSectionCollapsed(false);
+  }, [focusProjectKey, entries]);
   const toggleCollapsed = useCallback(() => {
     const next = !collapsed;
     setCollapsed(next);

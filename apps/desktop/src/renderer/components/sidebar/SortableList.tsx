@@ -104,6 +104,8 @@ export interface SortableListProps<T> {
   handle?: string;
   /** 拖拽真正开始 / 结束时通知调用方；用于暂停列表外部的自动副作用。 */
   onDragActiveChange?: (active: boolean) => void;
+  /** Return true when an external drop target consumed this drag. */
+  onExternalDrop?: (itemId: string, target: Element | null) => boolean;
   /** 可选 CSS selector：匹配的元素不参与拖拽起手势（按钮、输入框等）。
    *  默认 `'button, input, textarea, select, a, [data-no-drag]'`，覆盖
    *  绝大多数会"误把可交互元素当成拖动起点"的场景。 */
@@ -137,6 +139,7 @@ export function SortableList<T>({
   reducedMotion = false,
   handle,
   onDragActiveChange,
+  onExternalDrop,
   filter,
   forceFallback = true,
   className,
@@ -153,10 +156,12 @@ export function SortableList<T>({
   const getIdRef = useRef(getId);
   const onReorderRef = useRef(onReorder);
   const onDragActiveChangeRef = useRef(onDragActiveChange);
+  const onExternalDropRef = useRef(onExternalDrop);
   itemsRef.current = items;
   getIdRef.current = getId;
   onReorderRef.current = onReorder;
   onDragActiveChangeRef.current = onDragActiveChange;
+  onExternalDropRef.current = onExternalDrop;
 
   // 标记下一次 onEnd 是"窗口失焦兜底"触发的——onEnd 里把 DOM 复位后直接 return,
   // 不调 onReorder, 避免用户切走窗口的瞬间被记下一次未授意的顺序变化。
@@ -165,6 +170,8 @@ export function SortableList<T>({
   // sortable container. Drops on the composer, split panes, or outside Cindy
   // can still leave Sortable's DOM temporarily moved while the gesture passes.
   const nativeDropDispositionRef = useRef<'internal' | 'external' | null>(null);
+  const externalDropTargetRef = useRef<Element | null>(null);
+  const dragStartIdsRef = useRef<readonly string[] | null>(null);
 
   // mount 时创建 Sortable；unmount 时销毁。后续 props 变化通过 option() 更新。
   useEffect(() => {
@@ -205,10 +212,16 @@ export function SortableList<T>({
       // 所以"按下未拖"和"普通 hover"都不会上 grabbing 光标,只有真正拖动中才会。
       onStart: () => {
         nativeDropDispositionRef.current = null;
+        externalDropTargetRef.current = null;
+        dragStartIdsRef.current = itemsRef.current.map(getIdRef.current);
         document.body.classList.add(SORTING_BODY_CLASS);
         onDragActiveChangeRef.current?.(true);
       },
       onEnd: (evt: SortableEvent) => {
+        // Capture-phase pointer listeners record this while the temporary
+        // target is still mounted, before Sortable calls onEnd.
+        const target = externalDropTargetRef.current;
+        externalDropTargetRef.current = null;
         // 正常 drop 和失焦兜底(dispatch pointercancel → _onDrop → onEnd)都会走到
         // 这里,统一在入口摘掉全局 grabbing 标记。
         document.body.classList.remove(SORTING_BODY_CLASS);
@@ -228,13 +241,23 @@ export function SortableList<T>({
         // 失焦兜底路径也要走这一步，否则 ghost 位置上的 item 会留在被 hover
         // 让位时的位置上。
         const parent = evt.from;
-        if (parent && evt.item && oldIndex != null) {
+        const draggedId = evt.item.getAttribute('data-sortable-id');
+        const currentIds = itemsRef.current.map(getIdRef.current);
+        const restoreIndex = draggedId ? currentIds.indexOf(draggedId) : -1;
+        if (parent && evt.item && restoreIndex >= 0) {
           evt.item.parentNode?.removeChild(evt.item);
-          const refNode = parent.children[oldIndex] ?? null;
+          const refNode = parent.children[restoreIndex] ?? null;
           parent.insertBefore(evt.item, refNode);
         }
 
-        if (aborted || (!forceFallback && dropDisposition !== 'internal')) return;
+        if (aborted) return;
+        // Row identity comes from the dragged DOM, never a possibly shifted
+        // live-array index. A removed row cannot be moved into another space.
+        if (draggedId && currentIds.includes(draggedId) && onExternalDropRef.current?.(draggedId, target)) return;
+        const started = dragStartIdsRef.current;
+        dragStartIdsRef.current = null;
+        if (started && (started.length !== currentIds.length || started.some((id, index) => id !== currentIds[index]))) return;
+        if (!forceFallback && dropDisposition !== 'internal') return;
         if (oldIndex == null || newIndex == null || oldIndex === newIndex) return;
 
         const currentItems = itemsRef.current;
@@ -253,6 +276,16 @@ export function SortableList<T>({
     // Native Sortable receives the document `drop` event after capture. Record
     // whether the final target is internal or external before onEnd restores
     // the transient DOM move.
+    const captureDropTarget = (event: Event) => {
+      if (Sortable.active !== instance || !onExternalDropRef.current || !document.elementFromPoint) return;
+      const pointer = event instanceof MouseEvent ? event :
+        typeof TouchEvent !== 'undefined' && event instanceof TouchEvent ? event.changedTouches[0] : null;
+      if (pointer) externalDropTargetRef.current = document.elementFromPoint(pointer.clientX, pointer.clientY);
+    };
+    document.addEventListener('pointerup', captureDropTarget, true);
+    document.addEventListener('mouseup', captureDropTarget, true);
+    document.addEventListener('touchend', captureDropTarget, true);
+    document.addEventListener('drop', captureDropTarget, true);
     const markDropDisposition = (event: Event) => {
       if (Sortable.active !== instance) return;
       const target = event.target;
@@ -286,6 +319,10 @@ export function SortableList<T>({
       window.removeEventListener('blur', abortIfActive);
       document.removeEventListener('visibilitychange', onVisibilityChange);
       document.removeEventListener('drop', markDropDisposition, true);
+      document.removeEventListener('pointerup', captureDropTarget, true);
+      document.removeEventListener('mouseup', captureDropTarget, true);
+      document.removeEventListener('touchend', captureDropTarget, true);
+      document.removeEventListener('drop', captureDropTarget, true);
       // 拖动中组件被卸载时兜底清掉标记,避免 grabbing 光标残留到全局。
       document.body.classList.remove(SORTING_BODY_CLASS);
       onDragActiveChangeRef.current?.(false);

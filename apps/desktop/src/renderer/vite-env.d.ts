@@ -4777,6 +4777,12 @@ interface ElectronAPI {
   };
 
   sidebarSettings: {
+    createSpace: (name: string, ownerStamp: import('../shared/dataOwnerPush').DataOwnerPushStamp) => Promise<import('../shared/sidebarSettings').SidebarSpacesState>;
+    updateSpace: (id: string, patch: { name?: string; order?: number; collapsed?: boolean }, ownerStamp: import('../shared/dataOwnerPush').DataOwnerPushStamp) => Promise<import('../shared/sidebarSettings').SidebarSpacesState>;
+    deleteSpace: (id: string, ownerStamp: import('../shared/dataOwnerPush').DataOwnerPushStamp) => Promise<import('../shared/sidebarSettings').SidebarSpacesState>;
+    setProjectSpace: (projectKey: string, spaceId: string | null, ownerStamp: import('../shared/dataOwnerPush').DataOwnerPushStamp) => Promise<import('../shared/sidebarSettings').SidebarSpacesState>;
+    setShowSpaces: (showSpaces: boolean, ownerStamp: import('../shared/dataOwnerPush').DataOwnerPushStamp) => Promise<import('../shared/sidebarSettings').SidebarSpacesState>;
+    onSpacesChanged: (cb: (state: import('../shared/sidebarSettings').SidebarSpacesState) => void) => () => void;
     claimLegacyRendererOwner: () => import('../shared/sidebarSettings').SidebarLegacyRendererOwnerClaim;
     loadSnapshot: () => import('../shared/sidebarSettings').SidebarSettingsSnapshot;
     mutatePinnedOrder: (

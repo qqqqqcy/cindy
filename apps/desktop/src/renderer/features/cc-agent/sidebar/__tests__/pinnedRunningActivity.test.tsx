@@ -29,7 +29,7 @@ vi.mock('@/hooks/useSidebarCardMode', () => ({
 vi.mock('../SessionItem', () => ({ SessionItem: () => null }));
 vi.mock('../SessionCard', () => ({ SessionCard: () => null }));
 vi.mock('../CardMasonry', () => ({ CardMasonry: () => null }));
-vi.mock('@/components/sidebar/SortableList', () => ({ SortableList: () => null }));
+vi.mock('@/components/sidebar/SortableList', () => ({ SortableList: ({ items, renderItem }: { items: PinnedSidebarEntry[]; renderItem: (entry: PinnedSidebarEntry, index: number) => ReactNode }) => items.map((item, index) => <div key={item.id}>{renderItem(item, index)}</div>) }));
 vi.mock('@/components/ui/tooltip', () => ({
   Tip: ({ children }: { children: ReactNode }) => children,
 }));
@@ -64,6 +64,23 @@ afterEach(() => {
   view.mode = 'text';
   // The section's collapse is remembered; each case starts expanded.
   localStorage.clear();
+});
+
+// spaces.md P0: a project deep link must reveal the actual pinned row even
+// when the pinned section starts collapsed; no prior test covered navigation.
+describe('pinned project focus', () => {
+  it('opens the collapsed pinned section for the matching project', () => {
+    const pinned: PinnedSidebarEntry = { kind: 'project', id: 'project:a', project: { projectKey: 'local:/a', sessions: [] }, displaySessions: [] } as unknown as PinnedSidebarEntry;
+    const renderProject = () => <div>pinned project row</div>;
+    const view = render(<PinnedSection {...props([pinned])} renderProject={renderProject} />);
+    fireEvent.click(screen.getByRole('button', { name: 'ccAgent.sidebar.pinned' }));
+    // Remount after the collapse animation so the row is truly unmounted.
+    view.unmount();
+    const next = render(<PinnedSection {...props([pinned])} renderProject={renderProject} />);
+    expect(screen.queryByText('pinned project row')).toBeNull();
+    next.rerender(<PinnedSection {...props([pinned])} renderProject={renderProject} focusProjectKey="local:/a" />);
+    expect(screen.getByText('pinned project row')).toBeTruthy();
+  });
 });
 
 describe('pinned section remote starting settlement', () => {

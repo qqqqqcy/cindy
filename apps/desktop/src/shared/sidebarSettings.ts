@@ -10,7 +10,23 @@ export function isSidebarGhostId(value: unknown): value is string {
   return typeof value === 'string' && isValidPluginStoragePart(value);
 }
 
+export interface SidebarSpace {
+  id: string;
+  name: string;
+  order: number;
+  collapsed: boolean;
+}
+
+export interface SidebarSpacesState extends DataOwnerPushStamp {
+  spaces: SidebarSpace[];
+  projectSpaceIds: Record<string, string>;
+  showSpaces: boolean;
+}
+
 export interface SidebarSettingsSnapshot extends DataOwnerPushStamp {
+  readonly spaces?: SidebarSpace[];
+  readonly projectSpaceIds?: Record<string, string>;
+  readonly showSpaces?: boolean;
   /** True when Main has a durable pinnedOrder override, including an explicit empty array. */
   readonly pinnedOrderIsAuthoritative: boolean;
   readonly pinnedOrder: string[];
@@ -93,6 +109,9 @@ export function isSidebarSettingsSnapshot(value: unknown): value is SidebarSetti
     isStringArray(candidate.pinnedOrder) &&
     isStringArray(candidate.hiddenProjectKeys) &&
     isHiddenMainViewGhostIds(candidate.hiddenMainViewGhostIds) &&
+    (candidate.spaces === undefined || isSidebarSpaces(candidate.spaces)) &&
+    (candidate.projectSpaceIds === undefined || isProjectSpaceIds(candidate.projectSpaceIds)) &&
+    (candidate.showSpaces === undefined || typeof candidate.showSpaces === 'boolean') &&
     (candidate.pinnedOrderIsAuthoritative || candidate.pinnedOrder.length === 0)
   );
 }
@@ -106,6 +125,27 @@ export function isSidebarLegacyRendererOwnerClaim(
     typeof (value as Partial<SidebarLegacyRendererOwnerClaim>).canInitialize === 'boolean' &&
     typeof (value as Partial<SidebarLegacyRendererOwnerClaim>).pinnedLegacyConsumed === 'boolean'
   );
+}
+
+export function isSidebarSpaces(value: unknown): value is SidebarSpace[] {
+  return Array.isArray(value) && value.every((item) =>
+    item !== null && typeof item === 'object' &&
+    typeof item.id === 'string' && typeof item.name === 'string' &&
+    typeof item.order === 'number' && Number.isFinite(item.order) &&
+    typeof item.collapsed === 'boolean',
+  );
+}
+
+function isProjectSpaceIds(value: unknown): value is Record<string, string> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) &&
+    Object.values(value).every((entry) => typeof entry === 'string');
+}
+
+export function isSidebarSpacesState(value: unknown): value is SidebarSpacesState {
+  if (!isDataOwnerPushStamp(value)) return false;
+  const state = value as Partial<SidebarSpacesState>;
+  return isSidebarSpaces(state.spaces) && isProjectSpaceIds(state.projectSpaceIds) &&
+    typeof state.showSpaces === 'boolean';
 }
 
 function isStringArray(value: unknown): value is string[] {

@@ -57,6 +57,43 @@ afterEach(() => {
   sortableMock.MockSortable.active = null;
 });
 
+describe('SortableList external project drop', () => {
+  // spaces.md P0: a cross-space drop must deliver the project identity and
+  // restore React's DOM before any ordinary reorder is committed (unit tier).
+  it.each(['pointerup', 'mouseup', 'touchend', 'drop'])('moves the correct project on %s without also reordering', (eventName) => {
+    const target = document.createElement('div');
+    const originalElementFromPoint = document.elementFromPoint;
+    Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: () => target });
+    try {
+      let membership = '';
+      const onExternalDrop = (id: string, dropTarget: Element | null) => { if (dropTarget !== target) return false; membership = id; return true; };
+      const onReorder = vi.fn();
+      const { container, rerender } = render(<SortableList items={['a', 'b']} getId={id => id} onReorder={onReorder} onExternalDrop={onExternalDrop} forceFallback={eventName !== 'drop'} renderItem={id => <span>{id}</span>} />);
+      const list = container.firstElementChild as HTMLElement;
+      const instance = sortableMock.MockSortable.instances[0];
+      const moved = list.children[0] as HTMLElement;
+      sortableMock.MockSortable.active = instance;
+      callback<() => void>(instance.options, 'onStart')();
+      // A row can appear before the dragged project while activity updates.
+      rerender(<SortableList items={['new', 'a', 'b']} getId={id => id} onReorder={onReorder} onExternalDrop={onExternalDrop} forceFallback={eventName !== 'drop'} renderItem={id => <span>{id}</span>} />);
+      list.append(moved);
+      if (eventName === 'touchend') {
+        const event = new TouchEvent('touchend', { bubbles: true });
+        Object.defineProperty(event, 'changedTouches', { value: [{ clientX: 20, clientY: 30 }] });
+        document.dispatchEvent(event);
+      } else {
+        document.dispatchEvent(new MouseEvent(eventName, { bubbles: true, clientX: 20, clientY: 30 }));
+      }
+      callback<(event: SortableEvent) => void>(instance.options, 'onEnd')({ item: moved, from: list, oldIndex: 0, newIndex: 1 });
+      expect(membership).toBe('a');
+      expect(rowIds(list)).toEqual(['new', 'a', 'b']);
+      expect(onReorder).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: originalElementFromPoint });
+    }
+  });
+});
+
 describe('SortableList native drop disposition', () => {
   it('restores the DOM and skips reorder when the final drop is external', () => {
     const onReorder = vi.fn();

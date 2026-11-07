@@ -14699,6 +14699,28 @@
           "delete": "Excluir automação"
         }
       },
+      "spaces": {
+        "show": "Mostrar espaços",
+        "collapseAll": "Recolher todos os espaços",
+        "projectCount": "{{count}} projetos",
+        "runningCount": "{{count}} em execução",
+        "create": "Criar espaço",
+        "rename": "Renomear espaço",
+        "delete": "Excluir espaço",
+        "name": "Nome do espaço",
+        "save": "Salvar espaço",
+        "menu": "Ações do espaço",
+        "moveTo": "Mover para espaço",
+        "remove": "Remover do espaço",
+        "removeTitle": "Remover projeto do espaço?",
+        "removeDescription": "“{{project}}” voltará à lista principal. Seus arquivos e sessões serão mantidos.",
+        "deleteTitle": "Excluir espaço?",
+        "deleteDescription": "Excluir “{{name}}”? Seus projetos voltarão à lista principal. Os arquivos e as sessões serão mantidos.",
+        "otherDevices": "{{count}} itens em outros dispositivos",
+        "empty": "Arraste um projeto para cá ou adicione-o pelo menu do projeto.",
+        "unassigned": "Fora dos espaços",
+        "updateFailed": "Não foi possível salvar os espaços"
+      },
       "projectAlias": {
         "inputLabel": "Nome do projeto",
         "renameFailed": "Falha ao renomear o projeto"

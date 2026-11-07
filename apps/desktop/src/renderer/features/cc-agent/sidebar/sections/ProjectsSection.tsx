@@ -35,6 +35,8 @@ import {
   useRef,
   useState,
   type ReactNode,
+  type Dispatch,
+  type SetStateAction,
 } from 'react';
 import {
   ChevronDown,
@@ -90,6 +92,7 @@ import {
 } from '../../hooks/helpers/sidebarFilterCore';
 import {
   CINDY_MAKE_GROUP_KEY,
+  buildMainListEntries,
   getMainListEntrySessions,
   holdViewedPriorityRank,
   onlineDeviceSectionIds,
@@ -135,6 +138,11 @@ import { BotAvatar } from '@/features/bots/BotAvatar';
 import type { FolderPickerOption } from '@/components/new-chat/FolderPickerPopover';
 import type { SessionMoveTarget } from '../sessionMoveTarget';
 import { resolveCollapsedProjectAttentionTone } from '../projectCollapsedAttention';
+import { useSidebarSpaces } from '../../hooks/useSidebarSpaces';
+import { partitionProjectsBySpace, projectSpaceId, type SpaceProjectsPartition } from '../../lib/sidebarSpaces';
+import { SpaceExitDropTarget, SpaceSection } from '../SpaceSection';
+import { usePendingProjectFocus } from '@/state/pendingProjectFocus';
+import { normalizeProjectKey } from '../../lib/projectGrouping';
 
 const CindyMakeCreateDialog = lazy(() =>
   import('@/components/cindy-make/CindyMakeCreateDialog').then((module) => ({
@@ -150,7 +158,7 @@ const MANUAL_PROJECT_SORT_HANDLE = '[data-project-header]';
 const MANUAL_PROJECT_SORT_FILTER = 'button, input, textarea, select, a, [data-no-drag]';
 
 /** 设备段折叠/对话组折叠共用的段 key:本机段 'local',远程段用 deviceId。 */
-const deviceSectionKey = (deviceId: string | null) => deviceId ?? 'local';
+const baseDeviceSectionKey = (deviceId: string | null) => deviceId ?? 'local';
 // 单段保留既有伙伴 key;设备分组与对话组同样按段独立记忆,不依赖任务顺序或组名。
 const botGroupKey = (botId: string, sectionKey: string) =>
   sectionKey === DIALOGUE_GROUP_ALL_KEY ? `bot:${botId}` : `bot:${botId}:${sectionKey}`;
@@ -295,7 +303,51 @@ export interface ProjectsSectionProps {
   isCreateDialogueDisabled?: boolean;
 }
 
-export function ProjectsSection({
+export function SpacePlaceholderHeaders({ allKnownProjects }: { allKnownProjects: ProjectNodeData[] }) {
+  const spaces = useSidebarSpaces();
+  const selectedMachine = useEffectiveSelectedMachineId();
+  const partitions = partitionProjectsBySpace([], spaces, allKnownProjects, selectedMachine, window.electronAPI.platform);
+  return <>{partitions.filter(partition => partition.space).map(partition => {
+    const space = partition.space!;
+    const hasMembers = spaces && allKnownProjects.some(project => projectSpaceId(project.projectKey, spaces, window.electronAPI.platform) === space.id);
+    return <SpaceSection key={space.id} space={space} projectCount={0} runningCount={0} otherDeviceCount={partition.otherDeviceCount} empty={!hasMembers}>{null}</SpaceSection>;
+  })}</>;
+}
+
+export function ProjectsSection(props: ProjectsSectionProps) {
+  const spaces = useSidebarSpaces();
+  const pendingFocus = usePendingProjectFocus();
+  const selectedMachine = useEffectiveSelectedMachineId();
+  useRemoteSessionActivityRevision();
+  const partitions = useMemo(() => partitionProjectsBySpace(props.projects, spaces, props.allKnownProjects, selectedMachine, window.electronAPI.platform), [props.projects, props.allKnownProjects, spaces, selectedMachine]);
+  const [collapsedDevices, setCollapsedDevices] = useState(loadDeviceGroupCollapsedKeys);
+  useEffect(() => { persistDeviceGroupCollapsedKeys(collapsedDevices); }, [collapsedDevices]);
+  useEffect(() => {
+    if (!pendingFocus) return;
+    const targetKey = normalizeProjectKey(pendingFocus.workingDir) ?? `local:${pendingFocus.workingDir}`;
+    const targetComparison = projectKeyComparisonKey(targetKey, window.electronAPI.platform);
+    const project = props.projects.find(item => projectKeyComparisonKey(item.projectKey, window.electronAPI.platform) === targetComparison);
+    if (!project) return;
+    const id = spaces?.showSpaces ? projectSpaceId(project.projectKey, spaces, window.electronAPI.platform) : null;
+    const key = id ? `space:${id}:${baseDeviceSectionKey(project.deviceLinkDeviceId)}` : baseDeviceSectionKey(project.deviceLinkDeviceId);
+    setCollapsedDevices(previous => {
+      if (!previous.has(key)) return previous;
+      const next = new Set(previous); next.delete(key); return next;
+    });
+  }, [pendingFocus, props.projects, spaces]);
+  const unassigned = partitions.find(partition => partition.space === null);
+  const spacePartitions = partitions.filter(partition => partition.space !== null);
+  return <ProjectsSectionContent {...props} projects={unassigned?.projects ?? []} collapsedDevices={collapsedDevices} setCollapsedDevices={setCollapsedDevices} spaceLayer={spaces?.showSpaces ? spaces : null} foldSpacePartitions={spacePartitions} leadingContent={spacePartitions.map(partition => {
+    const space = partition.space!;
+    const runningCount = partition.projects.flatMap(project => project.sessions).filter(session => props.runningSessionIds.has(session.id) || props.priorityContext?.runningSessionIds.has(session.id) || getRemoteSessionActivity(session.id, session.deviceLinkDeviceId)?.phase === 'running').length;
+    const hasMembers = spaces && props.allKnownProjects.some(project => projectSpaceId(project.projectKey, spaces, window.electronAPI.platform) === space.id);
+    return <SpaceSection key={space.id} space={space} projectCount={partition.projects.length} runningCount={runningCount} otherDeviceCount={partition.otherDeviceCount} empty={!hasMembers}>
+      <ProjectsSectionContent {...props} projects={partition.projects} unclassified={[]} dialogues={[]} dialogueActionSessions={[]} bots={[]} hideHeader spaceLayer={null} spaceId={space.id} collapsedDevices={collapsedDevices} setCollapsedDevices={setCollapsedDevices} />
+    </SpaceSection>;
+  })} />;
+}
+
+function ProjectsSectionContent({
   unclassified,
   projects,
   dialogues,
@@ -340,8 +392,18 @@ export function ProjectsSection({
   remoteDeviceIndex = null,
   onCreateDialogue,
   isCreateDialogueDisabled = false,
-}: ProjectsSectionProps) {
+  hideHeader = false,
+  leadingContent,
+  spaceLayer,
+  spaceId = null,
+  foldSpacePartitions = [],
+  collapsedDevices,
+  setCollapsedDevices,
+}: ProjectsSectionProps & { hideHeader?: boolean; leadingContent?: ReactNode; spaceLayer?: ReturnType<typeof useSidebarSpaces>; spaceId?: string | null; foldSpacePartitions?: SpaceProjectsPartition[]; collapsedDevices: ReadonlySet<string>; setCollapsedDevices: Dispatch<SetStateAction<ReadonlySet<string>>> }) {
   const { t } = useTranslation();
+  const spaces = useSidebarSpaces();
+  const [draggingProject, setDraggingProject] = useState(false);
+  const deviceSectionKey = (deviceId: string | null) => spaceId ? `space:${spaceId}:${baseDeviceSectionKey(deviceId)}` : baseDeviceSectionKey(deviceId);
   const remoteDevices = useRemoteDevices();
   // 分组索引会排除断线设备；已有缓存条目的段头仍需读取设备名，并跟随改名更新。
   const cachedDeviceNames = useMemo(
@@ -381,11 +443,25 @@ export function ProjectsSection({
   );
   const customProjectOrder =
     filter.groupBy === 'project' && displayedProjectOrder.projectOrder === 'custom';
-  const projectDragEnabled = customProjectOrder;
+  const projectDragEnabled = customProjectOrder || Boolean(spaces?.showSpaces && spaces.spaces.length);
   const projectKeysForOrderBaseline = allProjectKeysForOrder;
   // 段级收起已随「全部任务 = 范围下拉」取消(2026-08-13 用户定稿):标题的点击
   // 语义让给机器范围切换;「想要紧凑」由右侧「收起所有分组」承接。
   const [showAllProjects, setShowAllProjects] = useCollapsibleShowAll(false);
+  const pendingFocus = usePendingProjectFocus();
+  useEffect(() => {
+    if (!pendingFocus) return;
+    const targetKey = normalizeProjectKey(pendingFocus.workingDir) ?? `local:${pendingFocus.workingDir}`;
+    const key = projectKeyComparisonKey(targetKey, localPlatform);
+    const target = projects.find(project => projectKeyComparisonKey(project.projectKey, localPlatform) === key);
+    if (!target) return;
+    setShowAllProjects(true);
+    setExpandedDeviceSections(previous => {
+      const section = deviceSectionKey(target.deviceLinkDeviceId);
+      if (previous.has(section)) return previous;
+      return new Set(previous).add(section);
+    });
+  }, [pendingFocus, projects, localPlatform, setShowAllProjects, spaceId]);
   const [makeCreateOpen, setMakeCreateOpen] = useState(false);
   // 设备段各自的「显示全部」(2026-08-13 复核 P2:共用一个标志会让点任一段的
   // 段内按钮把所有段一起展开——按钮看起来是段内操作,作用域也必须是段内)。
@@ -394,6 +470,16 @@ export function ProjectsSection({
   );
 
   const getProjectId = useCallback((p: ProjectNodeData) => p.projectKey, []);
+  const onProjectDrop = useCallback((projectKey: string, target: Element | null) => {
+    const destination = target?.closest('[data-space-drop-id]');
+    if (!destination || !spaces?.showSpaces) return false;
+    const nextSpaceId = destination.getAttribute('data-space-drop-id') || null;
+    if (nextSpaceId === spaceId) return false;
+    const project = projects.find(item => item.projectKey === projectKey);
+    if (!project) return false;
+    spaces.moveProject(project, nextSpaceId);
+    return true;
+  }, [projects, spaces, spaceId]);
 
   const handleReorder = useCallback(
     (visibleNewOrder: string[]) => {
@@ -714,6 +800,7 @@ export function ProjectsSection({
     const previous = prevProjectOrderRef.current;
     prevProjectOrderRef.current = filter.projectOrder;
     if (
+      hideHeader ||
       previous === 'custom' ||
       filter.projectOrder !== 'custom' ||
       filter.groupBy !== 'project' ||
@@ -727,7 +814,7 @@ export function ProjectsSection({
       snapshotManualProjectOrder(keys, projectKeysForOrderBaseline, localPlatform),
       projectKeysForOrderBaseline,
     );
-  }, [filter, projectKeysForOrderBaseline, localPlatform]);
+  }, [filter, projectKeysForOrderBaseline, localPlatform, hideHeader]);
 
   const deviceSections = useMemo<MainListDeviceSection[]>(() => {
     if (!deviceGroupingActive) return [{ deviceId: null, entries: [...visibleMixedEntries] }];
@@ -752,16 +839,28 @@ export function ProjectsSection({
     filter.manualProjectOrder,
     priorityContext,
   ]);
+  // The top-level fold button describes all visible partitions, including
+  // spaces whose children are currently unmounted by their collapsed header.
+  const foldSpaceEntries = useMemo(() => foldSpacePartitions.map(partition => ({
+    id: partition.space!.id,
+    entries: buildMainListEntries({ projects: partition.projects, dialogues: [], bots: [], unclassified: [], groupBy: filter.groupBy, groupDialogue: filter.groupDialogue, sortBy: filter.sortBy, projectOrder: displayedProjectOrder.projectOrder, manualProjectOrder: displayedProjectOrder.manualProjectOrder, priorityContext, notifications, scheduleSessionIndex }),
+  })), [foldSpacePartitions, filter.groupBy, filter.groupDialogue, filter.sortBy, displayedProjectOrder.projectOrder, displayedProjectOrder.manualProjectOrder, priorityContext, notifications, scheduleSessionIndex]);
+  const allFoldEntries = useMemo(() => [...mixedEntries, ...foldSpaceEntries.flatMap(partition => partition.entries)], [mixedEntries, foldSpaceEntries]);
+  const foldDeviceKeys = useMemo(() => {
+    if (!deviceGroupingActive) return [];
+    const keys = deviceSections.map(section => baseDeviceSectionKey(section.deviceId));
+    for (const partition of foldSpaceEntries) {
+      if (!partition.entries.length) continue;
+      const sections = splitEntriesByDevice(partition.entries, [...(remoteDeviceIndex?.keys() ?? [])], { onlineDeviceIds: onlineDeviceSectionIds(remoteDeviceIndex, selectedMachineId) });
+      keys.push(...sections.map(section => `space:${partition.id}:${baseDeviceSectionKey(section.deviceId)}`));
+    }
+    return keys;
+  }, [deviceGroupingActive, deviceSections, foldSpaceEntries, remoteDeviceIndex, selectedMachineId]);
   const deviceNameSources = useMemo(() => deviceSections.flatMap((section) => section.deviceId ? [{
     deviceId: section.deviceId,
     name: remoteDeviceIndex?.get(section.deviceId)?.name ?? cachedDeviceNames.get(section.deviceId),
   }] : []), [deviceSections, remoteDeviceIndex, cachedDeviceNames]);
   // 设备段折叠按本地显示偏好恢复，设置页往返导致重挂时也保留。
-  const [collapsedDevices, setCollapsedDevices] = useState(loadDeviceGroupCollapsedKeys);
-  useEffect(() => {
-    // 单设备切换、批量收起和全部展开共用保存路径。
-    persistDeviceGroupCollapsedKeys(collapsedDevices);
-  }, [collapsedDevices]);
   // 「对话」组折叠:与项目行折叠同级的分组状态(用户裁决:对话组的折叠交互与
   // 项目分组一致,含「收起所有分组」批量操作)。按分组 key 记忆——单一列表只有
   // 一个组(DIALOGUE_GROUP_ALL_KEY);按设备分组时每个设备段各有一个对话组,
@@ -797,7 +896,7 @@ export function ProjectsSection({
   //   双层(设备 + 组层同时存在)→ 循环:收组层 → 收设备层 → 全部展开。
   // 组层 = 项目行 + 自动任务组 + 「对话」组行。项目侧复用 ProjectNode 折叠状态,
   // 自动任务组复用 owner-scoped 持久化状态,对话组沿用本地显示偏好。
-  const hasGroupLayer = mixedEntries.some((entry) => entry.kind !== 'session');
+  const hasGroupLayer = allFoldEntries.some((entry) => entry.kind !== 'session');
   // 对话与 Cindy Make 分组按各自命名空间、设备段记忆折叠。
   // 「收起/展开所有分组」只作用于这些可见 key,不动其它模式下的记忆。
   const visibleSessionGroupKeys = useMemo<string[]>(() => {
@@ -809,35 +908,33 @@ export function ProjectsSection({
         return [];
       });
     if (!deviceGroupingActive) {
-      return keysFor(visibleMixedEntries, DIALOGUE_GROUP_ALL_KEY);
+      return [...keysFor(visibleMixedEntries, spaceId ? `space:${spaceId}:${DIALOGUE_GROUP_ALL_KEY}` : DIALOGUE_GROUP_ALL_KEY), ...foldSpaceEntries.flatMap(partition => keysFor(partition.entries, `space:${partition.id}:${DIALOGUE_GROUP_ALL_KEY}`))];
     }
-    return deviceSections.flatMap((section) =>
-      keysFor(section.entries, deviceSectionKey(section.deviceId)),
-    );
-  }, [deviceGroupingActive, visibleMixedEntries, deviceSections]);
+    return [...deviceSections.flatMap((section) => keysFor(section.entries, deviceSectionKey(section.deviceId))), ...foldSpaceEntries.flatMap(partition => splitEntriesByDevice(partition.entries, [...(remoteDeviceIndex?.keys() ?? [])], { onlineDeviceIds: onlineDeviceSectionIds(remoteDeviceIndex, selectedMachineId) }).flatMap(section => keysFor(section.entries, `space:${partition.id}:${baseDeviceSectionKey(section.deviceId)}`)))];
+  }, [deviceGroupingActive, visibleMixedEntries, deviceSections, foldSpaceEntries, remoteDeviceIndex, selectedMachineId, spaceId]);
   const allSessionGroupsCollapsed =
     visibleSessionGroupKeys.length === 0 ||
     visibleSessionGroupKeys.every((key) => collapsedDialogueGroups.has(key));
   const visibleAutomationGroupKeys = useMemo(
     () =>
-      mixedEntries
+      allFoldEntries
         .filter(
           (entry): entry is Extract<MainListEntry, { kind: 'automation-group' }> =>
             entry.kind === 'automation-group',
         )
         .map((entry) => entry.group.id),
-    [mixedEntries],
+    [allFoldEntries],
   );
   const legacyAutomationGroupKeys = useMemo(
     () =>
       new Map(
-        mixedEntries.flatMap((entry) =>
+        allFoldEntries.flatMap((entry) =>
           entry.kind === 'automation-group' && entry.group.legacyId
             ? [[entry.group.id, entry.group.legacyId] as const]
             : [],
         ),
       ),
-    [mixedEntries],
+    [allFoldEntries],
   );
   const [
     allAutomationGroupsCollapsed,
@@ -851,22 +948,27 @@ export function ProjectsSection({
   );
   // 只检查实际项目行。已经收进 Cindy Make 的工作目录不再各占一行，
   // 不能用它们旧的目录折叠状态阻止分组整体进入“全部展开”状态。
-  const allVisibleProjectGroupsCollapsed = mixedEntries.every(
+  const allVisibleProjectGroupsCollapsed = allFoldEntries.every(
     (entry) => entry.kind !== 'project' || collapsed.has(entry.project.projectKey),
   );
   const allGroupsCollapsed =
     allVisibleProjectGroupsCollapsed && allSessionGroupsCollapsed && allAutomationGroupsCollapsed;
-  const hasDeviceLayer = deviceGroupingActive && deviceSections.length > 0;
-  const allDevicesCollapsed =
-    hasDeviceLayer &&
-    deviceSections.every((section) => collapsedDevices.has(deviceSectionKey(section.deviceId)));
-  const foldState: 'collapse-groups' | 'collapse-devices' | 'expand-all' | null = (() => {
+  const hasDeviceLayer = deviceGroupingActive && foldDeviceKeys.length > 0;
+  const allDevicesCollapsed = hasDeviceLayer && foldDeviceKeys.every(key => collapsedDevices.has(key));
+  const hasOpenSpaces = Boolean(spaceLayer?.spaces.some(space => !space.collapsed));
+  const foldState: 'collapse-spaces' | 'collapse-groups' | 'collapse-devices' | 'expand-all' | null = (() => {
+    if (hasOpenSpaces) return 'collapse-spaces';
+    if (spaceLayer?.spaces.length && !hasGroupLayer && !hasDeviceLayer) return 'expand-all';
     if (!hasGroupLayer && !hasDeviceLayer) return null;
     if (hasGroupLayer && !allGroupsCollapsed) return 'collapse-groups';
     if (hasDeviceLayer && !allDevicesCollapsed) return 'collapse-devices';
     return 'expand-all';
   })();
   const handleFoldAll = useCallback(() => {
+    if (foldState === 'collapse-spaces' && spaceLayer) {
+      void (async () => { for (const space of spaceLayer.spaces) if (!space.collapsed && !(await spaceLayer.update(space.id, { collapsed: true }))) break; })();
+      return;
+    }
     if (foldState === 'collapse-groups') {
       onCollapseAll();
       setDialogueCollapsed(visibleSessionGroupKeys, true);
@@ -874,27 +976,29 @@ export function ProjectsSection({
       return;
     }
     if (foldState === 'collapse-devices') {
-      setCollapsedDevices(
-        new Set(deviceSections.map((section) => deviceSectionKey(section.deviceId))),
-      );
+      setCollapsedDevices(previous => new Set([...previous, ...foldDeviceKeys]));
       return;
     }
     // expand-all:全部层级展开(设备段 + 项目行 + 自动任务组 + 对话组)。
-    setCollapsedDevices(new Set());
+    if (spaceLayer) void (async () => { for (const space of spaceLayer.spaces) if (space.collapsed && !(await spaceLayer.update(space.id, { collapsed: false }))) break; })();
+    setCollapsedDevices(previous => new Set([...previous].filter(key => !foldDeviceKeys.includes(key))));
     onExpandAll();
     setDialogueCollapsed(visibleSessionGroupKeys, false);
     setAllAutomationGroupsCollapsed(false);
   }, [
     foldState,
-    deviceSections,
+    foldDeviceKeys,
     visibleSessionGroupKeys,
     onCollapseAll,
     onExpandAll,
     setDialogueCollapsed,
     setAllAutomationGroupsCollapsed,
+    spaceLayer,
   ]);
   const foldLabel =
-    foldState === 'collapse-groups'
+    foldState === 'collapse-spaces'
+      ? t('ccAgent.sidebar.spaces.collapseAll')
+      : foldState === 'collapse-groups'
       ? hasDeviceLayer
         ? t('ccAgent.sidebar.foldAll.collapseProjects')
         : t('ccAgent.sidebar.foldAll.collapseGroups')
@@ -978,6 +1082,20 @@ export function ProjectsSection({
       onArchiveAll={onArchiveAll}
     />
   );
+
+  const renderDraggableProject = (project: ProjectNodeData): ReactNode =>
+    spaces?.showSpaces && spaces.spaces.length ? <SortableList
+      key={project.projectKey}
+      items={[project]}
+      getId={getProjectId}
+      onReorder={() => {}}
+      onExternalDrop={onProjectDrop}
+      onDragActiveChange={setDraggingProject}
+      handle={MANUAL_PROJECT_SORT_HANDLE}
+      filter={MANUAL_PROJECT_SORT_FILTER}
+      reducedMotion={reducedMotion}
+      renderItem={renderProjectNode}
+    /> : renderProjectNode(project);
 
   // 散排任务行 / 自动任务组 / 「对话」组行。散排行与自动任务组带来源标签(hover);
   // 对话组行 = 可折叠的分组头 + 组内会话(折叠上限与对话段旧口径一致)。dialogueGroupKey 标识
@@ -1155,22 +1273,24 @@ export function ProjectsSection({
         </Suspense>
       )}
       {/* 范围标题恒在:无列表内容时仍画这一行,不把设置入口一起摘掉。 */}
-      <MainListScopeHeader
+      {!hideHeader && <MainListScopeHeader
         filter={filter}
         allKnownProjects={allKnownProjects}
         dialogueCount={dialogueCount}
         hasRemoteDevices={deviceGroupingAvailable}
         fold={
-          hasMainListContent && foldState !== null
+          (hasMainListContent || Boolean(spaceLayer?.spaces.length)) && foldState !== null
             ? {
                 label: foldLabel,
                 Icon: FoldIcon,
                 onClick: handleFoldAll,
-                disabled: projectNodesToggleDisabled && !hasDeviceLayer && !hasGroupLayer,
+                disabled: projectNodesToggleDisabled && !hasDeviceLayer && !hasGroupLayer && !(spaceLayer?.spaces.length),
               }
             : null
         }
-      />
+      />}
+      {leadingContent}
+      {draggingProject && spaceId !== null && <SpaceExitDropTarget />}
       {hasMainListContent ? (
         <div className="relative flex flex-col gap-1 pt-1 pr-0 pl-3">
           {!deviceGroupingActive &&
@@ -1208,8 +1328,10 @@ export function ProjectsSection({
               <SortableList
                 items={visibleProjectNodes}
                 getId={getProjectId}
-                onReorder={handleReorder}
-                disabled={!projectDragEnabled || (projectsOverflow && !showAllProjects)}
+                onReorder={(order) => { if (!projectsOverflow || showAllProjects) handleReorder(order); }}
+                onExternalDrop={onProjectDrop}
+                onDragActiveChange={setDraggingProject}
+                disabled={!projectDragEnabled}
                 reducedMotion={reducedMotion}
                 handle={MANUAL_PROJECT_SORT_HANDLE}
                 filter={MANUAL_PROJECT_SORT_FILTER}
@@ -1332,12 +1454,10 @@ export function ProjectsSection({
                                   <SortableList
                                     items={sectionProjects}
                                     getId={getProjectId}
-                                    onReorder={handleReorder}
-                                    disabled={
-                                      !projectDragEnabled ||
-                                      (sectionView.isOverflowing &&
-                                        !expandedDeviceSections.has(key))
-                                    }
+                                    onReorder={(order) => { if (!sectionView.isOverflowing || expandedDeviceSections.has(key)) handleReorder(order); }}
+                                    onExternalDrop={onProjectDrop}
+                                    onDragActiveChange={setDraggingProject}
+                                    disabled={!projectDragEnabled}
                                     reducedMotion={reducedMotion}
                                     handle={MANUAL_PROJECT_SORT_HANDLE}
                                     filter={MANUAL_PROJECT_SORT_FILTER}
@@ -1357,7 +1477,7 @@ export function ProjectsSection({
                               ) : (
                                 sectionView.visibleEntries.map((entry) =>
                                   entry.kind === 'project'
-                                    ? renderProjectNode(entry.project)
+                                    ? renderDraggableProject(entry.project)
                                     : renderNonProjectEntry(entry, key, sectionDialogueTarget),
                                 )
                               )}
@@ -1384,7 +1504,7 @@ export function ProjectsSection({
                 .filter((entry) => entry.kind !== 'cindy-make-group')
                 .map((entry) =>
                   entry.kind === 'project'
-                    ? renderProjectNode(entry.project)
+                    ? renderDraggableProject(entry.project)
                     : renderNonProjectEntry(entry, DIALOGUE_GROUP_ALL_KEY),
                 )}
             </div>

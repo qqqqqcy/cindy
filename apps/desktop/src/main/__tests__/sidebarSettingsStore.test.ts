@@ -172,6 +172,37 @@ function claimLegacyRendererOwner(): {
 }
 
 describe('sidebarSettingsStore', () => {
+  // Unit: production IPC must preserve concurrent sidebar writes and owner isolation;
+  // existing pin/visibility tests do not exercise space ownership or deletion.
+  it('persists space mutations alongside concurrent sidebar changes and deletes only assignments', async () => {
+    const invoke = async (kind: string, payload: object) =>
+      await harness.handlers.get(`sidebar-settings:spaces-${kind}`)!({}, request(payload)) as import('../../shared/sidebarSettings').SidebarSpacesState;
+    expect(loadSnapshot()).toMatchObject({ spaces: [], projectSpaceIds: {}, showSpaces: true });
+    const created = await invoke('create', { name: 'Work' });
+    const id = created.spaces[0]!.id;
+    await Promise.all([
+      invoke('assign', { projectKey: 'device:other:/project', spaceId: id }),
+      hiddenHandler(request({ projectKey: 'local:C:/work', hidden: true })),
+      invoke('update', { id, patch: { collapsed: true, order: 3, name: 'Renamed' } }),
+      invoke('show', { showSpaces: false }),
+    ]);
+    expect(loadSnapshot()).toMatchObject({ spaces: [{ id, name: 'Renamed', order: 3, collapsed: true }], projectSpaceIds: { 'device:other:/project': id }, showSpaces: false, hiddenProjectKeys: ['local:C:/work'] });
+    const deleted = await invoke('delete', { id });
+    expect(deleted).toMatchObject({ spaces: [], projectSpaceIds: {}, showSpaces: false });
+    expect(loadSnapshot()).toMatchObject({ hiddenProjectKeys: ['local:C:/work'] });
+    expect(harness.send).toHaveBeenCalledWith('sidebar-settings:spaces-changed', deleted);
+    expect(harness.untrustedSend).not.toHaveBeenCalled();
+    await expect(invoke('assign', { projectKey: 'local:C:/work', spaceId: id })).rejects.toThrow();
+  });
+
+  it('rejects a queued space write after switching owner', async () => {
+    const handler = harness.handlers.get('sidebar-settings:spaces-create')!;
+    const pending = handler({}, request({ name: 'Old owner' })) as Promise<unknown>;
+    setSession('cloud', 'owner-b');
+    await expect(pending).rejects.toThrow();
+    expect(loadSnapshot()).toMatchObject({ spaces: [] });
+    expect(fs.existsSync(ownerFile('owner-b')) ? fs.readFileSync(ownerFile('owner-b'), 'utf8') : '').not.toContain('Old owner');
+  });
   beforeEach(async () => {
     setPlatform('win32');
     harness.root = fs.mkdtempSync(path.join(os.tmpdir(), 'cindy-sidebar-owner-state-'));
